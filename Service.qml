@@ -52,8 +52,12 @@ Item {
     onTriggered: root.pumpQueue()
   }
 
+  // Driven by the process actually stopping, not by a flag set beside it.
+  // Setting running = true while the previous run's flag has not fallen yet is
+  // a no-op, so the queue stalled after its first window — which is why windows
+  // that were already open when the shell started were never remembered.
   function pumpQueue() {
-    if (root.capturing !== "" || root.pending.length === 0) return
+    if (captureProc.running || root.pending.length === 0) return
     root.capturing = root.pending.shift()
     captureProc.command = [root.captureScript, root.capturing]
     captureProc.running = true
@@ -67,7 +71,6 @@ Item {
       root.live = next
     }
     root.capturing = ""
-    root.pumpQueue()
   }
 
   // The window is already gone; this is the only moment its description is
@@ -75,6 +78,15 @@ Item {
   function remember(address) {
     var entry = root.live[address]
     if (!entry) return
+
+    // Filtered as it closes rather than as it is shown: a window nobody wants
+    // back should not take a slot in a list that only holds a dozen.
+    if (Model.isIgnored(entry)) {
+      var without = Object.assign({}, root.live)
+      delete without[address]
+      root.live = without
+      return
+    }
 
     var next = Object.assign({}, root.live)
     delete next[address]
@@ -122,6 +134,7 @@ Item {
       waitForEnd: true
       onStreamFinished: root.rememberCapture(text)
     }
+    onRunningChanged: if (!running) root.pumpQueue()
   }
 
   // Windows that were already open when the shell started never raised an

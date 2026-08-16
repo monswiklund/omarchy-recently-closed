@@ -9,6 +9,7 @@ running what it was running. An Omarchy Quattro bar widget.
 |---|---|
 | Everything | Omarchy **Quattro** — the shell plugin system does not exist before it |
 | Capturing | `hyprctl` and `jq`, both already on an Omarchy install |
+| Browser pages | `strings`, from binutils; without it browsers come back empty |
 
 No other dependencies, nothing is downloaded at runtime, and nothing runs with
 `sudo`. The plugin writes one file of its own,
@@ -65,6 +66,12 @@ being typed in.
 
 ## The list
 
+**The screensaver is not in it.** Some windows are not closed so much as
+finished: the screensaver dismisses itself the moment you touch the keyboard,
+and offering to bring it back is offering to blank the screen you just
+unblanked. Omarchy's other own windows — btop, a terminal, the about box — are
+windows you might genuinely want back, so the ignore list stays one line long.
+
 Newest first, and the same window is never listed twice — closing four
 terminals in the same directory offers that directory once. The list is for
 getting something back, not for counting how often you lost it.
@@ -108,10 +115,21 @@ o.bind("SUPER + SHIFT + T", "Reopen last closed window",
 
 ## What it cannot bring back
 
-**The contents of the window, only the window.** A browser returns to its own
-session restore, not the tabs you had. An editor returns to the file it opens by
-default. Claude Code is the exception, and only because it can be told to
-continue the conversation for a directory.
+**Every tab, only the page you were on.** A browser keeps no URL on its command
+line, but it does write its session to disk — and the window's title sits a few
+dozen bytes from that tab's address in it. That is enough to bring the window
+back on the page you were reading. The other tabs in it are in the same file but
+belong to the window in a way that cannot be read without parsing the format
+properly, so they do not come back.
+
+Matching is deliberately strict: an exact title and a URL within 400 bytes.
+Looser than that reopens a stranger's page, which is worse than reopening none —
+in which case you get an empty window, as before. Reading the session needs
+`strings`, and without it browsers simply come back empty.
+
+**An editor's file.** It returns to whatever it opens by default. Claude Code is
+the exception, and only because it can be told to continue the conversation for
+a directory.
 
 **A window whose command cannot be run again.** Some apps are started by a
 launcher that does not survive in `/proc`, and single-instance apps hand off to

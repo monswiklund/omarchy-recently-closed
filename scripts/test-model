@@ -9,7 +9,7 @@ const vm = require("vm")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
 const Model = {}
-vm.runInNewContext(source.replace(/^\.pragma library\s*/, "") + "\nObject.assign(exports, { normalizeAddress, parseEntry, addressesFrom, withClosed, parseClosed, serialize, reopenExpr, entryLabel, entryDetail })", { exports: Model })
+vm.runInNewContext(source.replace(/^\.pragma library\s*/, "") + "\nObject.assign(exports, { normalizeAddress, parseEntry, addressesFrom, isIgnored, withClosed, parseClosed, serialize, reopenExpr, entryLabel, entryDetail })", { exports: Model })
 
 let failures = 0
 function check(label, actual, expected) {
@@ -41,6 +41,17 @@ check("so is anything that is not JSON", Model.parseEntry("not json"), null)
 check("addresses are read out of a client list",
   Model.addressesFrom('[{"address":"0x1"},{"address":"2"},{"nope":true}]'), ["0x1", "0x2"])
 
+// The screensaver dismisses itself the moment you touch the keyboard, so
+// offering to bring it back is offering to blank the screen you just unblanked.
+check("the screensaver is not something you closed",
+  Model.isIgnored({ "class": "org.omarchy.screensaver" }), true)
+check("and case does not rescue it",
+  Model.isIgnored({ "class": "ORG.OMARCHY.SCREENSAVER" }), true)
+check("but Omarchy's other windows are ordinary windows",
+  ["org.omarchy.btop", "org.omarchy.terminal", "org.omarchy.about"].map(c => Model.isIgnored({ "class": c })),
+  [false, false, false])
+check("a window with no class is not ignored", Model.isIgnored({}), false)
+
 // The list is for getting something back, not for counting how often you lost
 // it: four terminals closed in the same directory should offer it once.
 let list = []
@@ -51,6 +62,18 @@ check("the newest is first", list[0].cmd, "ghostty -e top")
 check("and the same window is not listed twice", list.length, 2)
 check("but the same command elsewhere is its own row",
   Model.withClosed(list, { cmd: "ghostty -e top", workspace: "9" }, 5).length, 3)
+
+// A browser runs every window in one process: two windows share a command down
+// to the character and only their titles tell them apart. Without the title in
+// the identity, closing one collapses onto the one still open and the list
+// claims you closed something you did not.
+let browser = []
+browser = Model.withClosed(browser, { cmd: "chromium --new-window", workspace: "2", title: "Inbox" }, 5)
+browser = Model.withClosed(browser, { cmd: "chromium --new-window", workspace: "2", title: "Jira" }, 5)
+check("two browser windows are two rows", browser.length, 2)
+check("and the newest one is named", browser[0].title, "Jira")
+check("closing the same window twice is still one row",
+  Model.withClosed(browser, { cmd: "chromium --new-window", workspace: "2", title: "Jira" }, 5).length, 2)
 
 let capped = []
 for (let i = 0; i < 10; i++) capped = Model.withClosed(capped, { cmd: "app" + i, workspace: "1" }, 4)

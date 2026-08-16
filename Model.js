@@ -57,11 +57,45 @@ function addressesFrom(json) {
   return addresses
 }
 
+// --------------------------------------------------------------- ignored
+//
+// Some windows are not closed so much as finished. The screensaver dismisses
+// itself the moment you touch the keyboard, and offering to bring it back is
+// offering to blank your screen — the one thing you just told it not to do.
+//
+// Kept deliberately short. Omarchy's other own windows — btop, a terminal, the
+// about box — are windows you might genuinely want back, so only what closes
+// itself belongs here.
+function ignoredClasses() {
+  return ["org.omarchy.screensaver"]
+}
+
+function isIgnored(entry) {
+  var name = String((entry && entry["class"]) || "").toLowerCase()
+  if (name === "") return false
+
+  var ignored = ignoredClasses()
+  for (var i = 0; i < ignored.length; i++)
+    if (name === ignored[i].toLowerCase()) return true
+  return false
+}
+
 // ------------------------------------------------------------------ list
 //
 // Newest first, capped, and never two rows for the same thing. Closing four
 // terminals in the same directory should offer that directory once — the list
 // is for getting something back, not for counting how often you lost it.
+//
+// "The same thing" cannot be the command alone. A browser runs every window in
+// one process, so two windows share a command down to the character and only
+// their titles tell them apart; without the title in the identity, closing one
+// window collapses onto the one still open and the list claims you closed
+// something you did not.
+function sameThing(a, b) {
+  return a.cmd === b.cmd
+    && String(a.workspace) === String(b.workspace)
+    && String(a.title || "") === String(b.title || "")
+}
 
 function withClosed(list, entry, limit) {
   var next = [{
@@ -76,7 +110,7 @@ function withClosed(list, entry, limit) {
   }]
 
   for (var i = 0; i < list.length; i++) {
-    if (list[i].cmd === entry.cmd && String(list[i].workspace) === String(entry.workspace)) continue
+    if (sameThing(list[i], entry)) continue
     next.push(list[i])
     if (next.length >= limit) break
   }

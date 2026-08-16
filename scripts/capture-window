@@ -92,6 +92,99 @@ add_profile_flag() {
   printf '%s --profile-directory=%s' "$cmd" "$(printf '%q' "$profile")"
 }
 
+# A browser keeps every window in one process, so its command line is whatever
+# the browser was first started with — including URLs from a launch that has
+# nothing to do with the window being closed now. Replaying that reopens a
+# stranger's page. The address of the actual page is nowhere readable, so the
+# honest reopen is a fresh window and nothing more.
+# Which profile directory the command names, so the right session file is read.
+# Which profile directory the command names, so the right session file is read.
+# The name can contain a space — "Profile 4" — and it arrives shell-escaped, so
+# it cannot be picked out by word splitting.
+profile_of() {
+  local rest
+  case "$1" in
+    *--profile-directory=*) rest="${1#*--profile-directory=}" ;;
+    *) printf 'Default'; return ;;
+  esac
+  rest="${rest%% --*}"
+  rest="${rest//\\ / }"
+  printf '%s' "${rest:-Default}"
+}
+
+as_browser() {
+  local cmd="$1" title="$2" binary="${1%% *}" out=() arg
+  case "${binary##*/}" in
+    chromium | chromium-browser | google-chrome* | chrome | brave* | microsoft-edge* | vivaldi* | firefox*) ;;
+    *) printf '%s' "$cmd"; return ;;
+  esac
+
+  for arg in $cmd; do
+    case "$arg" in
+      http://* | https://* | file://* | about:*) continue ;;
+      --new-window) continue ;;
+    esac
+    out+=("$arg")
+  done
+
+  local url=""
+  url=$(browser_url_for "$2" "$(browser_config_dir "$binary")/$(profile_of "$cmd")" || true)
+  if [[ -n $url ]]; then
+    printf '%s --new-window %s' "${out[*]}" "$(printf '%q' "$url")"
+  else
+    printf '%s --new-window' "${out[*]}"
+  fi
+}
+
+# The page a browser window was on is not on any command line — but Chromium
+# writes its session to disk, and the window's title sits a few dozen bytes from
+# the tab's URL in it. That is enough to bring the window back on the page you
+# were reading rather than empty.
+#
+# This reads the session file by pattern rather than parsing its format, so it
+# only trusts an exact title match with a URL close by; anything looser would
+# reopen a stranger's page, which is worse than reopening none.
+browser_url_for() {
+  local title="$1" config="$2" session page
+  command -v strings >/dev/null 2>&1 || return 1
+  [[ -n $config && -d $config ]] || return 1
+
+  # Newest session first: the window that just closed is in the current one.
+  session=$(ls -t "$config"/Sessions/Session_* 2>/dev/null | head -1)
+  [[ -n $session && -r $session ]] || return 1
+
+  # Chromium appends its own name to the window title; the session file holds
+  # the page title alone.
+  page="${title% - *}"
+  [[ ${#page} -ge 4 ]] || return 1
+
+  { strings -a -t d "$session"; strings -el -t d "$session"; } |
+    awk -v want="$page" '
+      # An uninitialised awk variable used as a subscript is the empty string,
+      # not zero — the first title and the first URL would land under a key the
+      # loop below never reads.
+      BEGIN { n = 0; u = 0 }
+      {
+        off = $1 + 0
+        $1 = ""
+        sub(/^ +/, "")
+        if ($0 == want) { titles[n] = off; n++ }
+        else if ($0 ~ /^https?:/) { urlOff[u] = off; urlText[u] = $0; u++ }
+      }
+      END {
+        best = -1
+        for (i = 0; i < n; i++) {
+          for (j = 0; j < u; j++) {
+            d = urlOff[j] - titles[i]
+            if (d < 0) d = -d
+            if (d < 400 && (best < 0 || d < best)) { best = d; found = urlText[j] }
+          }
+        }
+        if (best >= 0) print found
+      }
+    ' | head -1
+}
+
 # Claude Code keeps its conversations per directory, so --continue reopens the
 # one that window was in rather than a blank session.
 as_command() {
@@ -171,9 +264,10 @@ cmd=$(strip_daemon_flags <"/proc/$pid/cmdline")
 [[ -n $cmd ]] || exit 1
 cmd=$(strip_exec_flag "$cmd")
 cmd=$(strip_working_dir "$cmd")
-cmd=$(add_profile_flag "$cmd")
-
 title=$(jq -r '.title' <<<"$client")
+
+cmd=$(add_profile_flag "$cmd")
+cmd=$(as_browser "$cmd" "$title")
 raw_cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)
 
 if is_terminal "$pid" "$raw_cmdline" && session=$(session_for "$pid" "$title"); then
