@@ -75,7 +75,16 @@ check("a terminal is named by what it ran",
   "docker compose logs -f")
 check("an app is named without its path or flags",
   Model.entryLabel({ cmd: "/usr/lib/chromium/chromium --ozone-platform=wayland" }), "chromium")
-check("the directory is the detail", Model.entryDetail(captured, "/home/you"), "Dev/api")
+// Two trailing components reads like a filesystem root just under home, where
+// it surfaces the username instead of the folder you chose.
+check("a folder just under home keeps its tilde",
+  Model.entryDetail({ cmd: "ghostty --working-directory=/home/you/Dev" }, "/home/you"), "~/Dev")
+check("and two levels down still does",
+  Model.entryDetail({ cmd: "ghostty --working-directory=/home/you/Dev/work" }, "/home/you"), "~/Dev/work")
+check("a project buried deep is named by its last two",
+  Model.entryDetail({ cmd: "ghostty --working-directory=/home/you/Dev/work/sportson/service-system" }, "/home/you"),
+  "sportson/service-system")
+check("the directory is the detail", Model.entryDetail(captured, "/home/you"), "~/Dev/api")
 check("home is said as home", Model.entryDetail({ cmd: "ghostty --working-directory=/home/you" }, "/home/you"), "~")
 check("a window with no directory falls back to its title",
   Model.entryDetail({ cmd: "chromium", title: "Inbox" }, "/home/you"), "Inbox")

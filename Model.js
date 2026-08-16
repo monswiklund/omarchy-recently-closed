@@ -143,8 +143,21 @@ function reopenExpr(entry) {
 
 // --------------------------------------------------------------- labels
 
-function shortenPath(dir) {
-  var parts = String(dir || "").replace(/\/$/, "").split("/")
+// A path said the way a person says it. Two trailing components is right for a
+// project buried deep — "sportson/service-system" — but wrong just under home,
+// where it surfaces the username and reads like a filesystem root rather than a
+// folder you chose. Anything inside home keeps the tilde it deserves.
+function shortenPath(dir, home) {
+  var path = String(dir || "").replace(/\/+$/, "")
+  if (path === "") return ""
+  if (home && path === home) return "~"
+
+  if (home && path.indexOf(home + "/") === 0) {
+    var relative = path.slice(home.length + 1)
+    if (relative.split("/").length <= 2) return "~/" + relative
+  }
+
+  var parts = path.split("/")
   return parts.length <= 2 ? parts.join("/") : parts.slice(-2).join("/")
 }
 
@@ -162,5 +175,5 @@ function entryDetail(entry, home) {
 
   var dir = match[1].replace(/\\ /g, " ")
   if (home && dir === home) return "~"
-  return shortenPath(dir)
+  return shortenPath(dir, home)
 }

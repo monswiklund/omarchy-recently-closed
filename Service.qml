@@ -111,13 +111,17 @@ Item {
     }
   }
 
+  // One completion handler, not two. Exit and stream-end both fire, and when
+  // they raced each other a capture's output was matched against whichever
+  // window the queue had moved on to — so windows went missing from the list
+  // with nothing to show for it. The stream ends whether or not the script
+  // produced anything, so it is the one that decides.
   Process {
     id: captureProc
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.rememberCapture(text)
     }
-    onExited: if (root.capturing !== "") { root.capturing = ""; root.pumpQueue() }
   }
 
   // Windows that were already open when the shell started never raised an
