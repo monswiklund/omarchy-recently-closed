@@ -126,10 +126,17 @@ function luaString(value) {
 // Back where it was, and without dragging the screen there. A floating window
 // arrives already placed; a tiled one takes its place from the layout, because
 // no dispatcher rebuilds a split tree.
-function reopenExpr(entry) {
+// `onto` overrides where it lands. A closed window usually wants to come back
+// where it was, but not always: after you have moved on, the workspace you are
+// standing in is the one you meant.
+function reopenExpr(entry, onto) {
+  var workspace = onto === undefined || onto === null || String(onto) === ""
+    ? entry.workspace
+    : String(onto)
+
   var rules = []
-  if (entry.workspace !== "" && Number(entry.workspace) > 0)
-    rules.push("workspace = " + luaString(entry.workspace + " silent"))
+  if (workspace !== "" && Number(workspace) > 0)
+    rules.push("workspace = " + luaString(workspace + " silent"))
 
   if (entry.floating) {
     rules.push("float = true")

@@ -65,6 +65,19 @@ check("a floating one returns placed",
   Model.reopenExpr({ cmd: "nautilus", workspace: "1", floating: true, at: "100,200", size: "800,600" }),
   'hl.dsp.exec_cmd("nautilus", { workspace = "1 silent", float = true, size = "800 600", move = "100 200" })')
 // A special workspace is a scratchpad, not a place to put a window back into.
+// A closed window usually wants to come back where it was, but not always:
+// after you have moved on, the workspace you are standing in is the one you
+// meant.
+check("an override decides where it lands",
+  Model.reopenExpr({ cmd: "ghostty", workspace: "2", floating: false, at: "", size: "" }, "7"),
+  'hl.dsp.exec_cmd("ghostty", { workspace = "7 silent" })')
+check("no override leaves it where it was",
+  Model.reopenExpr({ cmd: "ghostty", workspace: "2", floating: false, at: "", size: "" }, ""),
+  'hl.dsp.exec_cmd("ghostty", { workspace = "2 silent" })')
+check("an override rescues a window closed on a scratchpad",
+  Model.reopenExpr({ cmd: "spotify", workspace: "-98", floating: false, at: "", size: "" }, "3"),
+  'hl.dsp.exec_cmd("spotify", { workspace = "3 silent" })')
+
 check("a special workspace is not replayed",
   Model.reopenExpr({ cmd: "spotify", workspace: "-98", floating: false, at: "", size: "" }),
   'hl.dsp.exec_cmd("spotify")')

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -33,13 +34,15 @@ Panel {
     return false
   }
 
+  readonly property string here: Hyprland.focusedWorkspace ? String(Hyprland.focusedWorkspace.id) : ""
+
   // Taken off the list as it is reopened. It is not closed any more, and a row
   // that reopens the same window twice is a row that lies the second time.
-  function reopen(index) {
+  function reopen(index, onto) {
     var entry = root.shown[index]
     if (!entry) return false
 
-    Quickshell.execDetached(["hyprctl", "dispatch", Model.reopenExpr(entry)])
+    Quickshell.execDetached(["hyprctl", "dispatch", Model.reopenExpr(entry, onto)])
 
     var next = root.closed.slice()
     next.splice(index, 1)
@@ -238,14 +241,41 @@ Panel {
         }
       }
 
-      Text {
+      // The badge already says which workspace it came from, so it is the
+      // honest place to say "not that one, this one".
+      CursorSurface {
         id: workspaceLabel
         anchors.verticalCenter: parent.verticalCenter
         visible: closedRow.entry.workspace !== ""
-        text: "󰍹 " + closedRow.entry.workspace
-        color: Qt.darker(root.barForeground, 1.7)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
+        implicitWidth: workspaceText.implicitWidth + Style.spacing.md
+        implicitHeight: workspaceText.implicitHeight + Style.spacing.xs * 2
+        foreground: root.barForeground
+        accent: root.bar ? root.bar.foreground : Color.accent
+        current: closedRow.entry.workspace === root.here
+
+        MouseArea {
+          id: badgeMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.cursorIndex = closedRow.rowIndex }
+          onClicked: root.reopen(closedRow.rowIndex, root.here)
+        }
+
+        PanelToolTip {
+          visible: badgeMouse.containsMouse && closedRow.entry.workspace !== root.here
+          text: "Open on workspace " + root.here + " instead"
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          id: workspaceText
+          anchors.centerIn: parent
+          text: "󰍹 " + closedRow.entry.workspace
+          color: Qt.darker(root.barForeground, 1.7)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
     }
   }

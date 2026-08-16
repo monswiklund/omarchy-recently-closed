@@ -74,9 +74,16 @@ reopens the same window twice lies the second time.
 
 | | |
 |---|---|
-| Reopen | Click a row, or `↑`/`↓` and `Enter` |
+| Reopen where it was | Click a row, or `↑`/`↓` and `Enter` |
+| Reopen **here** | Click the workspace badge on the row |
 | Forget everything | "Clear the list" |
 | How many to keep | Widget setting, 3 to 40, default 12 |
+
+A closed window usually wants to come back where it was, but not always: after
+you have moved on, the workspace you are standing in is the one you meant. The
+badge already says which workspace the window came from, so it is the honest
+place to say *not that one, this one* — and it is the only way to rescue a
+window closed on a scratchpad, which otherwise comes back nowhere in particular.
 
 Tiled windows come back on their workspace and take their place from the
 layout; floating ones come back placed, because position and size are rules
