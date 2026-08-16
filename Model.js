@@ -57,6 +57,46 @@ function addressesFrom(json) {
   return addresses
 }
 
+// ------------------------------------------------------------- shortcut
+//
+// Read from Hyprland rather than written here. Whatever key the user actually
+// bound is the one the panel should name, and a hard-coded guess goes stale the
+// first time somebody rebinds it.
+
+function modifiersOf(modmask) {
+  var mask = Number(modmask) || 0
+  var names = []
+  if (mask & 64) names.push("SUPER")
+  if (mask & 4) names.push("CTRL")
+  if (mask & 8) names.push("ALT")
+  if (mask & 1) names.push("SHIFT")
+  return names
+}
+
+// Matched on the description, because the dispatcher is opaque: Omarchy's
+// bindings all arrive as "__lua" with a number for an argument.
+function shortcutFrom(json, needle) {
+  var binds
+  try {
+    binds = JSON.parse(json || "[]")
+  } catch (e) {
+    return ""
+  }
+  if (!Array.isArray(binds)) return ""
+
+  var wanted = String(needle || "").toLowerCase()
+  for (var i = 0; i < binds.length; i++) {
+    var bind = binds[i]
+    var description = String((bind && bind.description) || "").toLowerCase()
+    if (description === "" || description.indexOf(wanted) === -1) continue
+
+    var key = String(bind.key || "").toUpperCase()
+    if (key === "") continue
+    return modifiersOf(bind.modmask).concat([key]).join(" ")
+  }
+  return ""
+}
+
 // --------------------------------------------------------------- ignored
 //
 // Some windows are not closed so much as finished. The screensaver dismisses

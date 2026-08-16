@@ -9,7 +9,7 @@ running what it was running. An Omarchy Quattro bar widget.
 |---|---|
 | Everything | Omarchy **Quattro** — the shell plugin system does not exist before it |
 | Capturing | `hyprctl` and `jq`, both already on an Omarchy install |
-| Browser pages | `strings`, from binutils; without it browsers come back empty |
+| Browser tabs | `python3`; without it browsers come back empty |
 
 No other dependencies, nothing is downloaded at runtime, and nothing runs with
 `sudo`. The plugin writes one file of its own,
@@ -113,19 +113,26 @@ o.bind("SUPER + SHIFT + T", "Reopen last closed window",
   hl.dsp.exec_cmd("omarchy-shell recently-closed reopen"))
 ```
 
+## Browser windows come back whole
+
+A browser keeps no URL on its command line, so a window rebuilt from `/proc`
+alone comes back empty. It does write its session to disk, and that file says
+which tabs belong to which window — so every tab returns, in order, in one
+window.
+
+`scripts/browser-tabs` reads Chromium's SNSS session format directly: a header
+followed by length-prefixed commands, of which two matter — one binds a tab to a
+window, the other carries a tab's URL and title. Anything unrecognised is
+skipped by its own length, so a version that adds commands still parses.
+
+The window is found by its title, which is the title of the tab you were looking
+at. Several windows can share a title — three tabs on the same site — so the
+most recently touched one wins, since the session writes the newest last.
+
+Chromium, Chrome, Brave, Edge and Vivaldi share this format. Firefox does not
+and comes back empty.
+
 ## What it cannot bring back
-
-**Every tab, only the page you were on.** A browser keeps no URL on its command
-line, but it does write its session to disk — and the window's title sits a few
-dozen bytes from that tab's address in it. That is enough to bring the window
-back on the page you were reading. The other tabs in it are in the same file but
-belong to the window in a way that cannot be read without parsing the format
-properly, so they do not come back.
-
-Matching is deliberately strict: an exact title and a URL within 400 bytes.
-Looser than that reopens a stranger's page, which is worse than reopening none —
-in which case you get an empty window, as before. Reading the session needs
-`strings`, and without it browsers simply come back empty.
 
 **An editor's file.** It returns to whatever it opens by default. Claude Code is
 the exception, and only because it can be told to continue the conversation for

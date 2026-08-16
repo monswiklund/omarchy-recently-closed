@@ -26,6 +26,9 @@ Panel {
   property var closed: []
   readonly property var shown: closed.slice(0, limit)
 
+  // What the newest row is one keypress away from, if anything is bound to it.
+  property string shortcut: ""
+
   property bool cursorActive: false
   property int cursorIndex: 0
 
@@ -72,6 +75,16 @@ Panel {
     if (!opened) return
     root.cursorActive = false
     root.cursorIndex = 0
+    if (!bindsProc.running) bindsProc.running = true
+  }
+
+  Process {
+    id: bindsProc
+    command: ["hyprctl", "binds", "-j"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.shortcut = Model.shortcutFrom(text, "reopen last closed")
+    }
   }
 
   FileView {
@@ -112,16 +125,37 @@ Panel {
         anchors.top: parent.top
         spacing: Style.spacing.xl
 
-        PanelSectionHeader {
-          text: "RECENTLY CLOSED"
-          foreground: root.barForeground
-          fontFamily: root.fontFamily
+        Item {
+          width: parent.width
+          implicitHeight: sectionHeader.implicitHeight
+
+          PanelSectionHeader {
+            id: sectionHeader
+            anchors.left: parent.left
+            text: "RECENTLY CLOSED"
+            foreground: root.barForeground
+            fontFamily: root.fontFamily
+          }
+
+          // The newest row is one keypress away, so the key belongs beside the
+          // list rather than in a README nobody opens.
+          Text {
+            anchors.right: parent.right
+            anchors.baseline: sectionHeader.baseline
+            visible: root.shortcut !== "" && root.shown.length > 0
+            text: root.shortcut + "  reopens the top"
+            color: Qt.darker(root.barForeground, 1.8)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
 
         Text {
           visible: root.shown.length === 0
           width: parent.width
-          text: "Nothing closed yet. Windows you close land here, ready to come back."
+          text: root.shortcut === ""
+            ? "Nothing closed yet. Windows you close land here — bind omarchy-shell recently-closed reopen to undo the last one without looking."
+            : "Nothing closed yet. Windows you close land here, ready to come back."
           color: Qt.darker(root.barForeground, 1.4)
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall

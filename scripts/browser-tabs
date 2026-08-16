@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Every tab of the browser window with this title, in tab order.
+
+    browser-tabs <profile-config-dir> <window-title>   -> one URL per line
+
+A browser keeps no URL on its command line, so a window reopened from /proc
+alone comes back empty. It does write its session to disk, and that file says
+which tabs belong to which window — so a window can come back whole rather than
+on one page or none.
+
+This reads Chromium's SNSS session format directly rather than scanning it for
+strings that look like URLs. Scanning found the page you were on and no others,
+and had no way to tell one window's tabs from another's.
+
+The format is a header followed by length-prefixed commands. Two matter:
+
+    id 0  SetTabWindow          window id, tab id
+    id 6  UpdateTabNavigation   tab id, index, url, title
+
+Anything unrecognised is skipped by its own length, so a version that adds
+commands still parses.
+"""
+
+import struct
+import sys
+from pathlib import Path
+
+HEADER = 8
+SET_TAB_WINDOW = 0
+SET_TAB_INDEX = 2
+UPDATE_TAB_NAVIGATION = 6
+
+
+def read_string(body, pos, wide=False):
+    """A Pickle string: length, bytes, padded to a four byte boundary."""
+    if pos + 4 > len(body):
+        return None, pos
+    length = struct.unpack_from("<i", body, pos)[0]
+    pos += 4
+    if length < 0:
+        return None, pos
+
+    size = length * 2 if wide else length
+    if pos + size > len(body):
+        return None, pos
+
+    raw = body[pos:pos + size]
+    pos += size
+    pos += (-pos) % 4
+    text = raw.decode("utf-16-le" if wide else "utf-8", "ignore")
+    return text, pos
+
+
+def parse(path):
+    data = path.read_bytes()
+    if data[:4] != b"SNSS":
+        return {}, {}, {}, []
+
+    tab_window, tab_url, tab_title, order = {}, {}, {}, []
+    tab_index = {}
+    offset = HEADER
+
+    while offset + 2 <= len(data):
+        size = struct.unpack_from("<H", data, offset)[0]
+        if size == 0 or offset + 2 + size > len(data):
+            break
+
+        command = data[offset + 2]
+        body = data[offset + 3:offset + 2 + size]
+
+        if command == SET_TAB_WINDOW and len(body) >= 8:
+            window, tab = struct.unpack_from("<ii", body, 0)
+            tab_window[tab] = window
+            # File order doubles as recency: the window touched last is written
+            # last, which is how ties between identical titles are broken.
+            if window in order:
+                order.remove(window)
+            order.append(window)
+        elif command == SET_TAB_INDEX and len(body) >= 8:
+            tab, index = struct.unpack_from("<ii", body, 0)
+            tab_index[tab] = index
+        elif command == UPDATE_TAB_NAVIGATION and len(body) >= 12:
+            pos = 4  # the pickle's own size field
+            tab, _index = struct.unpack_from("<ii", body, pos)
+            pos += 8
+            url, pos = read_string(body, pos)
+            title, pos = read_string(body, pos, wide=True)
+            if url:
+                # Later navigations replace earlier ones: this is where the tab
+                # ended up, not where it started.
+                tab_url[tab] = url
+                tab_title[tab] = title or ""
+
+        offset += 2 + size
+
+    return tab_window, tab_url, tab_title, (tab_index, order)
+
+
+def main():
+    if len(sys.argv) < 3:
+        return 1
+
+    config = Path(sys.argv[1])
+    title = sys.argv[2]
+    # Chromium appends its own name to the window title; the session holds the
+    # page title alone.
+    if " - " in title:
+        title = title.rsplit(" - ", 1)[0]
+    if len(title) < 4:
+        return 1
+
+    sessions = sorted(config.glob("Sessions/Session_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not sessions:
+        return 1
+
+    tab_window, tab_url, tab_title, (tab_index, order) = parse(sessions[0])
+    if not tab_window:
+        return 1
+
+    # Which window held a tab with this title. Several can — three windows on
+    # the same site share a title — so the most recently touched one wins.
+    matches = [tab_window[tab] for tab, text in tab_title.items()
+               if text == title and tab in tab_window]
+    if not matches:
+        return 1
+    window = max(matches, key=lambda w: order.index(w) if w in order else -1)
+
+    tabs = [tab for tab, w in tab_window.items() if w == window and tab in tab_url]
+    tabs.sort(key=lambda t: tab_index.get(t, 0))
+
+    for tab in tabs:
+        url = tab_url[tab]
+        # A new tab page is what a browser opens by itself; asking for one back
+        # is asking for two.
+        if url.startswith("chrome://newtab"):
+            continue
+        print(url)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
