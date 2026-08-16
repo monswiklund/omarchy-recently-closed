@@ -122,21 +122,17 @@ function isIgnored(entry) {
 
 // ------------------------------------------------------------------ list
 //
-// Newest first, capped, and never two rows for the same thing. Closing four
-// terminals in the same directory should offer that directory once — the list
-// is for getting something back, not for counting how often you lost it.
+// Newest first, capped, and one row per window closed.
 //
-// "The same thing" cannot be the command alone. A browser runs every window in
-// one process, so two windows share a command down to the character and only
-// their titles tell them apart; without the title in the identity, closing one
-// window collapses onto the one still open and the list claims you closed
-// something you did not.
-function sameThing(a, b) {
-  return a.cmd === b.cmd
-    && String(a.workspace) === String(b.workspace)
-    && String(a.title || "") === String(b.title || "")
-}
-
+// There was a rule here that collapsed identical entries, on the theory that
+// four terminals closed in the same directory should be offered once. That was
+// wrong: two windows closed are two windows lost, and a list that offers one of
+// them back cannot give you the other. Two identical rows are two identical
+// windows, which is exactly what you had.
+//
+// Nothing needs deduplicating, because a window closes once — and reopening
+// takes its row off the list, so closing and reopening the same thing over and
+// over never accumulates.
 function withClosed(list, entry, limit) {
   var next = [{
     cmd: entry.cmd,
@@ -145,15 +141,10 @@ function withClosed(list, entry, limit) {
     workspace: entry.workspace,
     floating: entry.floating,
     at: entry.at,
-    size: entry.size,
-    closedAt: entry.closedAt || 0
+    size: entry.size
   }]
 
-  for (var i = 0; i < list.length; i++) {
-    if (sameThing(list[i], entry)) continue
-    next.push(list[i])
-    if (next.length >= limit) break
-  }
+  for (var i = 0; i < list.length && next.length < limit; i++) next.push(list[i])
   return next
 }
 

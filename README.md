@@ -72,9 +72,13 @@ and offering to bring it back is offering to blank the screen you just
 unblanked. Omarchy's other own windows — btop, a terminal, the about box — are
 windows you might genuinely want back, so the ignore list stays one line long.
 
-Newest first, and the same window is never listed twice — closing four
-terminals in the same directory offers that directory once. The list is for
-getting something back, not for counting how often you lost it.
+Newest first, one row per window closed. Two terminals closed in the same
+directory are two rows, because they were two windows and getting one back does
+not give you the other — a rule here once collapsed them and the second was lost
+for good.
+
+Nothing needs deduplicating: a window closes once, and a row is removed as it
+reopens, so closing and reopening the same thing never accumulates.
 
 A row is removed as it reopens. It is not closed any more, and a row that
 reopens the same window twice lies the second time.

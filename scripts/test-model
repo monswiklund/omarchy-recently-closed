@@ -52,28 +52,16 @@ check("but Omarchy's other windows are ordinary windows",
   [false, false, false])
 check("a window with no class is not ignored", Model.isIgnored({}), false)
 
-// The list is for getting something back, not for counting how often you lost
-// it: four terminals closed in the same directory should offer it once.
+// Two windows closed are two windows lost. A rule here once collapsed identical
+// entries and the second window could never be got back.
 let list = []
-list = Model.withClosed(list, { cmd: "ghostty -e top", workspace: "1" }, 5)
-list = Model.withClosed(list, { cmd: "chromium", workspace: "2" }, 5)
-list = Model.withClosed(list, { cmd: "ghostty -e top", workspace: "1" }, 5)
+list = Model.withClosed(list, { cmd: "ghostty -e top", workspace: "1", title: "top" }, 5)
+list = Model.withClosed(list, { cmd: "chromium", workspace: "2", title: "Inbox" }, 5)
+list = Model.withClosed(list, { cmd: "ghostty -e top", workspace: "1", title: "top" }, 5)
 check("the newest is first", list[0].cmd, "ghostty -e top")
-check("and the same window is not listed twice", list.length, 2)
-check("but the same command elsewhere is its own row",
-  Model.withClosed(list, { cmd: "ghostty -e top", workspace: "9" }, 5).length, 3)
-
-// A browser runs every window in one process: two windows share a command down
-// to the character and only their titles tell them apart. Without the title in
-// the identity, closing one collapses onto the one still open and the list
-// claims you closed something you did not.
-let browser = []
-browser = Model.withClosed(browser, { cmd: "chromium --new-window", workspace: "2", title: "Inbox" }, 5)
-browser = Model.withClosed(browser, { cmd: "chromium --new-window", workspace: "2", title: "Jira" }, 5)
-check("two browser windows are two rows", browser.length, 2)
-check("and the newest one is named", browser[0].title, "Jira")
-check("closing the same window twice is still one row",
-  Model.withClosed(browser, { cmd: "chromium --new-window", workspace: "2", title: "Jira" }, 5).length, 2)
+check("two identical windows are two rows", list.length, 3)
+check("because two closed windows are two windows to get back",
+  list.filter(e => e.cmd === "ghostty -e top").length, 2)
 
 let capped = []
 for (let i = 0; i < 10; i++) capped = Model.withClosed(capped, { cmd: "app" + i, workspace: "1" }, 4)
