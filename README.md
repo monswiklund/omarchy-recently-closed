@@ -25,6 +25,15 @@ directory rather than with flags that would break it.
 omarchy plugin add https://github.com/monswiklund/omarchy-recently-closed.git --enable
 ```
 
+It lands on the left of the bar. Somewhere else:
+
+```sh
+omarchy plugin enable io.github.monswiklund.recently-closed --section right
+```
+
+How many windows it remembers — 3 to 40, 12 by default — and the bar icon are
+widget settings, edited where every other widget's are.
+
 Installed by hand instead:
 
 ```sh
