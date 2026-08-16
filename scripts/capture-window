@@ -1,0 +1,198 @@
+#!/bin/bash
+# Describe one live window well enough to open it again later.
+#
+#   capture-window <address>   -> one JSON object on stdout, or nothing
+#
+# It has to run while the window is alive. Hyprland's closewindow event carries
+# only an address: by the time a window is gone its process is gone with it, and
+# /proc has nothing left to read. So the shell watching those events captures
+# every window as it opens and keeps the result until it is needed.
+#
+# The reconstruction rules are the ones Workspace Presets arrived at the hard
+# way, and they are copied rather than shared: two marketplace plugins that
+# depend on each other's files are two plugins that break separately.
+
+set -uo pipefail
+
+ADDRESS="${1:-}"
+[[ -n $ADDRESS ]] || exit 1
+# The event socket reports addresses without the 0x that hyprctl writes.
+[[ $ADDRESS == 0x* ]] || ADDRESS="0x$ADDRESS"
+
+client=$(hyprctl clients -j 2>/dev/null | jq -c --arg a "$ADDRESS" '.[] | select(.address == $a)') || exit 1
+[[ -n $client ]] || exit 1
+
+pid=$(jq -r '.pid' <<<"$client")
+[[ -n $pid && -r /proc/$pid/cmdline ]] || exit 1
+
+# A single-instance app's /proc entry belongs to its daemon, and a daemon is
+# started with the flags that tell it not to put a window on screen.
+strip_daemon_flags() {
+  local out=() arg
+  while IFS= read -r -d '' arg; do
+    case "$arg" in
+      --initial-window=false | --gtk-single-instance=*) continue ;;
+    esac
+    out+=("$arg")
+  done
+  printf '%s' "${out[*]}"
+}
+
+strip_working_dir() {
+  local out=() skip=false arg
+  for arg in $1; do
+    if [[ $skip == true ]]; then skip=false; continue; fi
+    case "$arg" in
+      --working-directory | --directory | --cwd | -D) skip=true; continue ;;
+      --working-directory=* | --directory=* | --cwd=*) continue ;;
+    esac
+    out+=("$arg")
+  done
+  printf '%s' "${out[*]}"
+}
+
+strip_exec_flag() { printf '%s' "${1%% -e *}"; }
+
+# Only the directory flag differs between terminals; -e is common ground, since
+# ghostty and alacritty implement it and foot accepts it for xterm compatibility.
+# An unrecognised terminal is captured without a directory rather than guessed at.
+working_directory_flag() {
+  case "${1##*/}" in
+    ghostty | foot) printf -- '--working-directory=%s' "$(printf '%q' "$2")" ;;
+    alacritty) printf -- '--working-directory %s' "$(printf '%q' "$2")" ;;
+    *) return 1 ;;
+  esac
+}
+
+browser_config_dir() {
+  case "${1##*/}" in
+    chromium | chromium-browser) printf '%s/.config/chromium' "$HOME" ;;
+    google-chrome | google-chrome-stable | chrome) printf '%s/.config/google-chrome' "$HOME" ;;
+    brave | brave-browser) printf '%s/.config/BraveSoftware/Brave-Browser' "$HOME" ;;
+    microsoft-edge | microsoft-edge-stable) printf '%s/.config/microsoft-edge' "$HOME" ;;
+    vivaldi | vivaldi-stable) printf '%s/.config/vivaldi' "$HOME" ;;
+    *) return 1 ;;
+  esac
+}
+
+# A browser with several profiles and no profile flag opens the chooser instead
+# of a browser, which stops the reopen dead.
+add_profile_flag() {
+  local cmd="$1" binary="${1%% *}" config state profile count
+  case "$cmd" in *--profile-directory=* | *" -P "*) printf '%s' "$cmd"; return ;; esac
+
+  config=$(browser_config_dir "$binary") || { printf '%s' "$cmd"; return; }
+  state="$config/Local State"
+  [[ -r $state ]] || { printf '%s' "$cmd"; return; }
+
+  count=$(jq '.profile.info_cache | length' "$state" 2>/dev/null || echo 0)
+  [[ ${count:-0} -gt 1 ]] || { printf '%s' "$cmd"; return; }
+  profile=$(jq -r '.profile.last_used // empty' "$state" 2>/dev/null)
+  [[ -n $profile ]] || { printf '%s' "$cmd"; return; }
+  printf '%s --profile-directory=%s' "$cmd" "$(printf '%q' "$profile")"
+}
+
+# Claude Code keeps its conversations per directory, so --continue reopens the
+# one that window was in rather than a blank session.
+as_command() {
+  case "${1%% *}" in
+    */claude | claude) printf 'claude --continue' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Only a terminal has a session inside it. Every other app has children too —
+# Electron keeps a pile of them — and treating those as "what the window was
+# running" turns a browser into a command line full of zygote helpers.
+is_terminal() {
+  local pid="$1" cmd="$2" child comm
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    comm=$(cat "/proc/$child/comm" 2>/dev/null) || continue
+    case "$comm" in bash | zsh | fish | sh | nu | dash | ksh) return 0 ;; esac
+  done
+  # A window this plugin reopened runs its command instead of a shell.
+  [[ $cmd == *" -e "* ]] && return 0
+  return 1
+}
+
+# A terminal runs every window in one process, so /proc cannot say which window
+# is in which directory. Here it does not have to: one address is being asked
+# about, and the shell whose window title matches is the one inside it.
+session_for() {
+  local root_pid="$1" title="$2" head pid comm dir child cmdline
+  head="${title%% *}"; head="${head##*/}"
+
+  for pid in $(pgrep -P "$root_pid" 2>/dev/null); do
+    comm=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+    dir=$(readlink "/proc/$pid/cwd" 2>/dev/null) || continue
+    [[ -n $dir && -d $dir ]] || continue
+
+    local matched=false
+    case "$comm" in
+      bash | zsh | fish | sh | nu | dash | ksh)
+        for child in $(pgrep -P "$pid" 2>/dev/null); do
+          [[ "$(cat "/proc/$child/comm" 2>/dev/null)" == "$head" ]] && matched=true
+        done
+        case "$title" in
+          "~") [[ $dir == "$HOME" ]] && matched=true ;;
+          "~/"*) [[ $dir == "$HOME/${title#\~/}" ]] && matched=true ;;
+          *)
+            local suffix="${title%% *}"; suffix="${suffix#…}"; suffix="${suffix#/}"
+            [[ -n $suffix && ($dir == *"/$suffix" || $dir == "$suffix") ]] && matched=true
+            ;;
+        esac
+        ;;
+      *)
+        # A window opened as `-e command` has no shell inside it, only the
+        # command — and it is the only thing in there.
+        matched=true
+        ;;
+    esac
+    [[ $matched == true ]] || continue
+
+    cmdline=""
+    case "$comm" in
+      bash | zsh | fish | sh | nu | dash | ksh)
+        for child in $(pgrep -P "$pid" 2>/dev/null); do
+          cmdline=$(tr '\0' ' ' <"/proc/$child/cmdline" 2>/dev/null | sed 's/[[:space:]]*$//')
+          [[ -n $cmdline ]] && break
+        done
+        ;;
+      *) cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | sed 's/[[:space:]]*$//') ;;
+    esac
+
+    printf '%s\t%s' "$dir" "${cmdline:+$(as_command "$cmdline")}"
+    return 0
+  done
+  return 1
+}
+
+cmd=$(strip_daemon_flags <"/proc/$pid/cmdline")
+[[ -n $cmd ]] || exit 1
+cmd=$(strip_exec_flag "$cmd")
+cmd=$(strip_working_dir "$cmd")
+cmd=$(add_profile_flag "$cmd")
+
+title=$(jq -r '.title' <<<"$client")
+raw_cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)
+
+if is_terminal "$pid" "$raw_cmdline" && session=$(session_for "$pid" "$title"); then
+  dir="${session%%$'\t'*}"
+  run="${session#*$'\t'}"
+  if flag=$(working_directory_flag "${cmd%% *}" "$dir"); then
+    cmd="$cmd $flag"
+  fi
+  [[ -n $run ]] && cmd="$cmd -e $run"
+fi
+
+jq -n -c \
+  --arg address "$ADDRESS" \
+  --arg cmd "$cmd" \
+  --arg class "$(jq -r '.class' <<<"$client")" \
+  --arg title "$title" \
+  --argjson workspace "$(jq '.workspace.id' <<<"$client")" \
+  --argjson floating "$(jq '.floating' <<<"$client")" \
+  --arg at "$(jq -r '.at | join(",")' <<<"$client")" \
+  --arg size "$(jq -r '.size | join(",")' <<<"$client")" \
+  '{address: $address, cmd: $cmd, class: $class, title: $title,
+    workspace: $workspace, floating: $floating, at: $at, size: $size}'

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.monswiklund.recently-closed",
+  "name": "Recently Closed",
+  "version": "0.1.0",
+  "author": "Måns Wiklund",
+  "license": "MIT",
+  "description": "Reopen a window you just closed — back on its workspace, in its directory, running what it ran.",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Recently Closed",
+    "description": "Windows you closed, ready to come back",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "left",
+    "defaults": { "icon": "󰕌", "limit": 12 },
+    "schema": [
+      { "key": "icon", "type": "string", "label": "Bar icon", "defaultValue": "󰕌" },
+      { "key": "limit", "type": "integer", "label": "How many to remember", "min": 3, "max": 40, "step": 1, "defaultValue": 12 }
+    ]
+  }
+}

@@ -1,0 +1,87 @@
+#!/usr/bin/env node
+// Model.js is a QML .js library, which node will not import directly — the
+// .pragma line is the only thing in the way, so it is stripped and the file
+// evaluated as an ordinary module.
+
+const fs = require("fs")
+const path = require("path")
+const vm = require("vm")
+
+const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
+const Model = {}
+vm.runInNewContext(source.replace(/^\.pragma library\s*/, "") + "\nObject.assign(exports, { normalizeAddress, parseEntry, addressesFrom, withClosed, parseClosed, serialize, reopenExpr, entryLabel, entryDetail })", { exports: Model })
+
+let failures = 0
+function check(label, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected)
+  if (!ok) failures++
+  console.log(`${ok ? "ok  " : "FAIL"} ${label}`)
+  if (!ok) console.log(`     expected ${JSON.stringify(expected)}\n     got      ${JSON.stringify(actual)}`)
+}
+
+// Hyprland names the same window two ways: the event socket writes "55…" and
+// hyprctl writes "0x55…". This shipped broken — a close event never found what
+// its own open event had stored, and the list stayed empty with no error.
+check("a bare address gains the prefix", Model.normalizeAddress("563fe6dc84a0"), "0x563fe6dc84a0")
+check("a prefixed one is left alone", Model.normalizeAddress("0x563fe6dc84a0"), "0x563fe6dc84a0")
+check("nothing stays nothing", Model.normalizeAddress("  "), "")
+check("both forms meet in the middle",
+  Model.normalizeAddress("563f") === Model.normalizeAddress("0x563f"), true)
+
+const captured = Model.parseEntry(JSON.stringify({
+  address: "563fe6dc84a0",
+  cmd: "/usr/bin/ghostty --working-directory=/home/you/Dev/api -e docker compose logs -f",
+  class: "com.mitchellh.ghostty", title: "api", workspace: 2, floating: false, at: "0,0", size: "800,600"
+}))
+check("a captured window keeps its prefixed address", captured.address, "0x563fe6dc84a0")
+check("an entry without a command is refused",
+  Model.parseEntry('{"address":"0x1","cmd":"   "}'), null)
+check("so is anything that is not JSON", Model.parseEntry("not json"), null)
+
+check("addresses are read out of a client list",
+  Model.addressesFrom('[{"address":"0x1"},{"address":"2"},{"nope":true}]'), ["0x1", "0x2"])
+
+// The list is for getting something back, not for counting how often you lost
+// it: four terminals closed in the same directory should offer it once.
+let list = []
+list = Model.withClosed(list, { cmd: "ghostty -e top", workspace: "1" }, 5)
+list = Model.withClosed(list, { cmd: "chromium", workspace: "2" }, 5)
+list = Model.withClosed(list, { cmd: "ghostty -e top", workspace: "1" }, 5)
+check("the newest is first", list[0].cmd, "ghostty -e top")
+check("and the same window is not listed twice", list.length, 2)
+check("but the same command elsewhere is its own row",
+  Model.withClosed(list, { cmd: "ghostty -e top", workspace: "9" }, 5).length, 3)
+
+let capped = []
+for (let i = 0; i < 10; i++) capped = Model.withClosed(capped, { cmd: "app" + i, workspace: "1" }, 4)
+check("the list is capped", capped.length, 4)
+check("and the cap drops the oldest", capped[0].cmd, "app9")
+
+// Reopening puts it back where it was without dragging the screen along.
+check("a tiled window returns to its workspace, silently",
+  Model.reopenExpr({ cmd: "ghostty", workspace: "2", floating: false, at: "", size: "" }),
+  'hl.dsp.exec_cmd("ghostty", { workspace = "2 silent" })')
+check("a floating one returns placed",
+  Model.reopenExpr({ cmd: "nautilus", workspace: "1", floating: true, at: "100,200", size: "800,600" }),
+  'hl.dsp.exec_cmd("nautilus", { workspace = "1 silent", float = true, size = "800 600", move = "100 200" })')
+// A special workspace is a scratchpad, not a place to put a window back into.
+check("a special workspace is not replayed",
+  Model.reopenExpr({ cmd: "spotify", workspace: "-98", floating: false, at: "", size: "" }),
+  'hl.dsp.exec_cmd("spotify")')
+
+// The command a terminal ran names the window better than the terminal does.
+check("a terminal is named by what it ran",
+  Model.entryLabel({ cmd: "ghostty --working-directory=/home/you/Dev/api -e docker compose logs -f" }),
+  "docker compose logs -f")
+check("an app is named without its path or flags",
+  Model.entryLabel({ cmd: "/usr/lib/chromium/chromium --ozone-platform=wayland" }), "chromium")
+check("the directory is the detail", Model.entryDetail(captured, "/home/you"), "Dev/api")
+check("home is said as home", Model.entryDetail({ cmd: "ghostty --working-directory=/home/you" }, "/home/you"), "~")
+check("a window with no directory falls back to its title",
+  Model.entryDetail({ cmd: "chromium", title: "Inbox" }, "/home/you"), "Inbox")
+
+check("a broken state file reads as an empty list", Model.parseClosed("{nope"), [])
+check("and rows without a command are dropped",
+  Model.parseClosed('[{"cmd":""},{"cmd":"ghostty","workspace":3}]').length, 1)
+
+process.exit(failures === 0 ? 0 : 1)
