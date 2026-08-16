@@ -92,7 +92,7 @@ Item {
     delete next[address]
     root.live = next
 
-    root.closed = Model.withClosed(root.closed, entry, root.limit)
+    root.closed = Model.withClosed(root.closed, entry, root.limit, Date.now())
     stateFile.setText(Model.serialize(root.closed))
   }
 

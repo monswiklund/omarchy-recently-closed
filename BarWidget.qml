@@ -12,6 +12,11 @@ BarWidget {
 
   readonly property string icon: setting("icon", "󰕌")
 
+  // The icon looks the same whether or not there is anything to undo, so a dot
+  // says there is. A dot rather than a count: a number in a bar is noise, and
+  // the answer you want at a glance is "yes" or "no", not "eleven".
+  readonly property bool hasClosed: panelLoader.item ? panelLoader.item.shown.length > 0 : false
+
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
@@ -66,5 +71,18 @@ BarWidget {
     fontSize: Style.font.icon
     tooltipText: "Recently closed"
     onPressed: function (b) { if (b === Qt.LeftButton) root.togglePanel() }
+
+    Rectangle {
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.rightMargin: Style.space(3)
+      anchors.topMargin: Style.space(4)
+      width: Style.space(4)
+      height: width
+      radius: width / 2
+      visible: root.hasClosed && !root.opened
+      color: root.bar ? root.bar.foreground : Color.foreground
+      opacity: 0.7
+    }
   }
 }

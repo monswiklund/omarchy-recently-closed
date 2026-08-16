@@ -9,7 +9,7 @@ const vm = require("vm")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
 const Model = {}
-vm.runInNewContext(source.replace(/^\.pragma library\s*/, "") + "\nObject.assign(exports, { normalizeAddress, parseEntry, addressesFrom, isIgnored, withClosed, parseClosed, serialize, reopenExpr, entryLabel, entryDetail })", { exports: Model })
+vm.runInNewContext(source.replace(/^\.pragma library\s*/, "") + "\nObject.assign(exports, { normalizeAddress, parseEntry, addressesFrom, isIgnored, ageLabel, tabCount, withoutIndex, withClosed, parseClosed, serialize, reopenExpr, entryLabel, entryDetail })", { exports: Model })
 
 let failures = 0
 function check(label, actual, expected) {
@@ -116,5 +116,30 @@ check("a window with no directory falls back to its title",
 check("a broken state file reads as an empty list", Model.parseClosed("{nope"), [])
 check("and rows without a command are dropped",
   Model.parseClosed('[{"cmd":""},{"cmd":"ghostty","workspace":3}]').length, 1)
+
+// A list of recently closed windows without a "when" is half a list: the one
+// from two minutes ago is nearly always what you want, and the one from the day
+// before yesterday is what you scroll past.
+const now = 1_700_000_000_000
+check("under a minute is just now", Model.ageLabel(now - 30_000, now), "now")
+check("minutes", Model.ageLabel(now - 5 * 60_000, now), "5m")
+check("hours", Model.ageLabel(now - 3 * 3_600_000, now), "3h")
+check("days", Model.ageLabel(now - 50 * 3_600_000, now), "2d")
+check("an entry from before this was recorded says nothing", Model.ageLabel(0, now), "")
+check("and a clock that went backwards does not say -1m", Model.ageLabel(now + 60_000, now), "now")
+
+// What a click gives back, rather than what the window used to be.
+check("a browser row counts its pages",
+  Model.tabCount({ cmd: "chromium --new-window https://a.dev https://b.dev" }), 2)
+check("a terminal has none",
+  Model.tabCount({ cmd: "ghostty --working-directory=/home/you/Dev" }), 0)
+check("a directory that looks like a URL is not a page",
+  Model.tabCount({ cmd: "ghostty --working-directory=/srv/https://x" }), 0)
+
+// Clearing the whole list to be rid of one row is a blunt instrument.
+const three = [{ cmd: "a" }, { cmd: "b" }, { cmd: "c" }]
+check("a single row can be forgotten", Model.withoutIndex(three, 1).map(e => e.cmd), ["a", "c"])
+check("out of range is refused", Model.withoutIndex(three, 9), null)
+check("the original is left alone", three.length, 3)
 
 process.exit(failures === 0 ? 0 : 1)

@@ -29,6 +29,17 @@ Panel {
   // What the newest row is one keypress away from, if anything is bound to it.
   property string shortcut: ""
 
+  // Re-read while the panel is open so "now" becomes "1m" under your eyes
+  // rather than the moment you reopen the panel.
+  property double clock: Date.now()
+
+  Timer {
+    interval: 30000
+    running: root.opened
+    repeat: true
+    onTriggered: root.clock = Date.now()
+  }
+
   property bool cursorActive: false
   property int cursorIndex: 0
 
@@ -66,6 +77,13 @@ Panel {
     root.cursorIndex = next < 0 ? root.shown.length - 1 : (next >= root.shown.length ? 0 : next)
   }
 
+  function forget(index) {
+    var next = Model.withoutIndex(root.closed, index)
+    if (!next) return
+    root.closed = next
+    stateFile.setText(Model.serialize(next))
+  }
+
   function clearAll() {
     root.closed = []
     stateFile.setText(Model.serialize([]))
@@ -75,6 +93,7 @@ Panel {
     if (!opened) return
     root.cursorActive = false
     root.cursorIndex = 0
+    root.clock = Date.now()
     if (!bindsProc.running) bindsProc.running = true
   }
 
@@ -233,6 +252,7 @@ Panel {
     accent: root.bar ? root.bar.foreground : Color.accent
 
     MouseArea {
+      id: rowMouse
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
@@ -251,7 +271,7 @@ Panel {
       spacing: Style.spacing.md
 
       Column {
-        width: parent.width - parent.spacing - workspaceLabel.implicitWidth
+        width: parent.width - parent.spacing * 3 - ageLabel.implicitWidth - workspaceLabel.implicitWidth - Style.space(26)
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.spacing.labelGap
 
@@ -267,12 +287,30 @@ Panel {
         Text {
           width: parent.width
           visible: text !== ""
-          text: Model.entryDetail(closedRow.entry, root.home)
+          text: {
+            var parts = []
+            var detail = Model.entryDetail(closedRow.entry, root.home)
+            if (detail !== "") parts.push(detail)
+            // What a click actually gives back, rather than what the window was.
+            var tabs = Model.tabCount(closedRow.entry)
+            if (tabs > 1) parts.push(tabs + " tabs")
+            return parts.join("  ·  ")
+          }
           color: Qt.darker(root.barForeground, 1.6)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
         }
+      }
+
+      Text {
+        id: ageLabel
+        anchors.verticalCenter: parent.verticalCenter
+        visible: text !== ""
+        text: Model.ageLabel(closedRow.entry.closedAt, root.clock)
+        color: Qt.darker(root.barForeground, 1.9)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
       }
 
       // The badge already says which workspace it came from, so it is the
@@ -309,6 +347,25 @@ Panel {
           color: Qt.darker(root.barForeground, 1.7)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
+        }
+      }
+
+      // Clearing the whole list to be rid of one row is a blunt instrument.
+      PanelActionButton {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: rowMouse.containsMouse || badgeMouse.containsMouse || forgetMouse.containsMouse
+        iconText: "󰅖"
+        tooltipText: "Forget this one"
+        foreground: root.barForeground
+        hoverColor: root.bar ? root.bar.urgent : Color.urgent
+        fontFamily: root.fontFamily
+        onClicked: root.forget(closedRow.rowIndex)
+
+        MouseArea {
+          id: forgetMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          acceptedButtons: Qt.NoButton
         }
       }
     }

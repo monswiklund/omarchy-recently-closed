@@ -133,8 +133,9 @@ function isIgnored(entry) {
 // Nothing needs deduplicating, because a window closes once — and reopening
 // takes its row off the list, so closing and reopening the same thing over and
 // over never accumulates.
-function withClosed(list, entry, limit) {
+function withClosed(list, entry, limit, now) {
   var next = [{
+    closedAt: Number(now) || 0,
     cmd: entry.cmd,
     "class": entry["class"],
     title: entry.title,
@@ -166,6 +167,7 @@ function parseClosed(text) {
       cmd: String(row.cmd),
       "class": String(row["class"] || ""),
       title: String(row.title || ""),
+      closedAt: Number(row.closedAt) || 0,
       workspace: row.workspace === undefined || row.workspace === null ? "" : String(row.workspace),
       floating: row.floating === true,
       at: String(row.at || ""),
@@ -173,6 +175,13 @@ function parseClosed(text) {
     })
   }
   return out
+}
+
+function withoutIndex(list, index) {
+  if (index < 0 || index >= list.length) return null
+  var next = list.slice()
+  next.splice(index, 1)
+  return next
 }
 
 function serialize(list) {
@@ -211,6 +220,36 @@ function reopenExpr(entry, onto) {
 
   if (rules.length === 0) return "hl.dsp.exec_cmd(" + luaString(entry.cmd) + ")"
   return "hl.dsp.exec_cmd(" + luaString(entry.cmd) + ", { " + rules.join(", ") + " })"
+}
+
+// ------------------------------------------------------------------ age
+//
+// A list of recently closed windows without a "when" is half a list: the window
+// you closed two minutes ago is nearly always the one you are looking for, and
+// one from the day before yesterday is what you scroll past.
+
+function ageLabel(closedAt, now) {
+  var then = Number(closedAt) || 0
+  if (then <= 0) return ""
+
+  var seconds = Math.max(0, Math.round(((Number(now) || 0) - then) / 1000))
+  if (seconds < 60) return "now"
+
+  var minutes = Math.round(seconds / 60)
+  if (minutes < 60) return minutes + "m"
+
+  var hours = Math.round(minutes / 60)
+  if (hours < 24) return hours + "h"
+
+  var days = Math.round(hours / 24)
+  return days + "d"
+}
+
+// How many pages a browser row will bring back. Counted from the command, so it
+// says what a click actually does rather than what the window used to be.
+function tabCount(entry) {
+  var matches = String(entry.cmd || "").match(/(^| )(https?|file):\/\/\S+/g)
+  return matches ? matches.length : 0
 }
 
 // --------------------------------------------------------------- labels
