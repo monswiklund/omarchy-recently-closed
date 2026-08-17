@@ -3,7 +3,7 @@
   "id": "io.github.monswiklund.recently-closed",
   "name": "Recently Closed",
   "version": "0.1.0",
-  "author": "Måns Wiklund",
+  "author": "Weaklund",
   "license": "MIT",
   "description": "Reopen a window you just closed — back on its workspace, in its directory, running what it ran.",
   "kinds": ["service", "bar-widget"],
