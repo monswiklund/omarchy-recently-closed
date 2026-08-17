@@ -145,6 +145,22 @@ most recently touched one wins, since the session writes the newest last.
 Chromium, Chrome, Brave, Edge and Vivaldi share this format. Firefox does not
 and comes back empty.
 
+## A window's command line is not trusted
+
+What a window was running is replayed through `hl.dsp.exec_cmd`, which hands a
+string to a shell. A window's command line is full of things somebody else
+chose — filenames, URLs, profile names — and a filename is allowed to contain a
+semicolon or a backtick. Joined into a string unquoted, that stops being an
+argument and becomes a command the next time the window is reopened.
+
+So every argument is quoted the moment it is read out of `/proc` and stays
+quoted; nothing here builds a command by joining raw `argv`, and the reverse
+step only ever evaluates what this plugin quoted itself. `scripts/test-capture`
+tries six ways in and checks each one comes back as text.
+
+Found in review by [@ryanrhughes](https://github.com/ryanrhughes) on the
+marketplace submission, and fixed before the plugin was listed.
+
 ## What it cannot bring back
 
 **An editor's file.** It returns to whatever it opens by default. Claude Code is
@@ -162,6 +178,7 @@ omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" Service.qml BarWidget.qml Panel.qml
 scripts/test-model      # addresses, the list, reopen rules, labels
 scripts/test-wiring     # every root.x() the QML calls exists
+scripts/test-capture    # no argument of a window's can become a command
 scripts/capture-window <address>   # what one live window would be remembered as
 ```
 

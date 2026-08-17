@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# What a window was running is replayed through a shell, and a window's command
+# line is not ours to trust: it holds filenames, URLs and profile names that
+# somebody else chose. These check that none of it can stop being an argument
+# and start being a command.
+#
+# The marketplace review that found this is issue #388 on
+# HANCORE-linux/omarchy-plugin-marketplace.
+
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
+
+# Load the functions without running the capture itself.
+functions=$(mktemp)
+trap 'rm -f "$functions" "$canary"' EXIT
+sed -n '/^quote()/,/^# Some launchers hand the kernel/p' capture-window | head -n -1 >"$functions"
+sed -n '/^split_packed_argv()/,/^}/p' capture-window >>"$functions"
+# shellcheck source=/dev/null
+source "$functions"
+
+canary=$(mktemp -u)
+failures=0
+
+check() {
+  if [[ $2 == "$3" ]]; then
+    echo "ok   $1"
+  else
+    failures=$((failures + 1))
+    echo "FAIL $1"
+    echo "     expected $3"
+    echo "     got      $2"
+  fi
+}
+
+runs_nothing() {
+  local label="$1" cmd="$2"
+  rm -f "$canary"
+  sh -c "true $cmd" >/dev/null 2>&1
+  if [[ -e $canary ]]; then
+    failures=$((failures + 1))
+    echo "FAIL $label — the argument ran as a command"
+  else
+    echo "ok   $label"
+  fi
+}
+
+argv() { printf '%s\0' "$@"; }
+first_back() { local a; while IFS= read -r -d '' a; do printf '%s' "$a"; return; done < <(argv_of "$1"); }
+nth_back() {
+  local want="$2" i=0 a
+  while IFS= read -r -d '' a; do
+    ((i++ == want)) && { printf '%s' "$a"; return; }
+  done < <(argv_of "$1")
+}
+
+# A filename is enough. Every one of these is a legal thing to call a file.
+for evil in \
+  '/home/you/; touch CANARY; #' \
+  '/home/you/$(touch CANARY)' \
+  '/home/you/`touch CANARY`' \
+  '/home/you/x && touch CANARY' \
+  '/home/you/x | touch CANARY' \
+  $'/home/you/x\ntouch CANARY'
+do
+  packed=${evil//CANARY/$canary}
+  quoted=$(argv ghostty "$packed" | strip_daemon_flags)
+  runs_nothing "metacharacters stay in the argument: ${evil:10:24}" "$quoted"
+  check "  and it comes back unchanged" "$(nth_back "$quoted" 1)" "$packed"
+done
+
+# The same string arriving the other way, as the argv of what ran inside a
+# terminal rather than the window's own command line.
+inner=$(as_command /usr/bin/vim "/tmp/; touch $canary")
+runs_nothing "a terminal's inner command is quoted too" "$inner"
+
+# Claude Code is the one command rewritten rather than replayed.
+check "claude is asked to continue" "$(as_command /usr/bin/claude)" "claude --continue"
+
+# Quoting must not cost the things that made the plugin work.
+c=$(argv chromium '--profile-directory=Profile 4' https://a.dev | strip_daemon_flags)
+check "a profile name with a space survives" "$(profile_of "$c")" "Profile 4"
+check "the binary is still readable" "$(binary_of "$c")" "chromium"
+
+c=$(argv /usr/bin/ghostty --working-directory=/home/you/Dev -e top | strip_daemon_flags)
+check "the working directory flag is dropped for a fresh one" \
+  "$(strip_working_dir "$c")" "$(quote /usr/bin/ghostty -e top)"
+
+c=$(argv app --initial-window=false --gtk-single-instance=true | strip_daemon_flags)
+check "daemon flags are still stripped" "$c" "app"
+
+# A launcher that packs its whole command line into argv[0] leaves a path no
+# file has. Splitting it is allowed only when the whole is not a program and the
+# first word is — so a real filename containing a space is never split.
+packed=$(quote "/bin/echo --show")
+check "a packed launcher line is split" "$(split_packed_argv "$packed")" "$(quote /bin/echo --show)"
+check "a real file with a space in its name is left whole" \
+  "$(split_packed_argv "$(quote /bin/sh)")" "$(quote /bin/sh)"
+check "and a first word that is not a program is left alone" \
+  "$(split_packed_argv "$(quote "/nope/nothing --show")")" "$(quote "/nope/nothing --show")"
+
+exit $((failures == 0 ? 0 : 1))

@@ -25,6 +25,34 @@ client=$(hyprctl clients -j 2>/dev/null | jq -c --arg a "$ADDRESS" '.[] | select
 pid=$(jq -r '.pid' <<<"$client")
 [[ -n $pid && -r /proc/$pid/cmdline ]] || exit 1
 
+# What a window was running comes back as one string, because that is what
+# hl.dsp.exec_cmd takes and it hands the string to a shell. So every argument
+# read out of /proc is quoted the moment it is picked up, and stays quoted:
+# a window whose command line holds a semicolon or a backtick — a filename is
+# enough — would otherwise run it as a command the next time the window is
+# reopened. Nothing here builds a command string by joining raw argv.
+quote() {
+  local out=() arg
+  for arg in "$@"; do out+=("$(printf '%q' "$arg")"); done
+  printf '%s' "${out[*]}"
+}
+
+# The inverse. Safe because the only thing ever evaluated is what quote() wrote:
+# the arguments come back as themselves, not as shell to run.
+unquote() { eval "set -- $1"; printf '%s\0' "$@"; }
+
+argv_of() {
+  local out=() arg
+  while IFS= read -r -d '' arg; do out+=("$arg"); done < <(unquote "$1")
+  printf '%s\0' "${out[@]}"
+}
+
+binary_of() {
+  local first
+  IFS= read -r -d '' first < <(unquote "$1") || return 1
+  printf '%s' "$first"
+}
+
 # A single-instance app's /proc entry belongs to its daemon, and a daemon is
 # started with the flags that tell it not to put a window on screen.
 strip_daemon_flags() {
@@ -35,20 +63,20 @@ strip_daemon_flags() {
     esac
     out+=("$arg")
   done
-  printf '%s' "${out[*]}"
+  quote "${out[@]}"
 }
 
 strip_working_dir() {
   local out=() skip=false arg
-  for arg in $1; do
+  while IFS= read -r -d '' arg; do
     if [[ $skip == true ]]; then skip=false; continue; fi
     case "$arg" in
       --working-directory | --directory | --cwd | -D) skip=true; continue ;;
       --working-directory=* | --directory=* | --cwd=*) continue ;;
     esac
     out+=("$arg")
-  done
-  printf '%s' "${out[*]}"
+  done < <(argv_of "$1")
+  quote "${out[@]}"
 }
 
 strip_exec_flag() { printf '%s' "${1%% -e *}"; }
@@ -78,7 +106,8 @@ browser_config_dir() {
 # A browser with several profiles and no profile flag opens the chooser instead
 # of a browser, which stops the reopen dead.
 add_profile_flag() {
-  local cmd="$1" binary="${1%% *}" config state profile count
+  local cmd="$1" binary config state profile count
+  binary=$(binary_of "$1") || { printf '%s' "$cmd"; return; }
   case "$cmd" in *--profile-directory=* | *" -P "*) printf '%s' "$cmd"; return ;; esac
 
   config=$(browser_config_dir "$binary") || { printf '%s' "$cmd"; return; }
@@ -98,47 +127,40 @@ add_profile_flag() {
 # stranger's page. The address of the actual page is nowhere readable, so the
 # honest reopen is a fresh window and nothing more.
 # Which profile directory the command names, so the right session file is read.
-# Which profile directory the command names, so the right session file is read.
-# The name can contain a space — "Profile 4" — and it arrives shell-escaped, so
-# it cannot be picked out by word splitting.
+# The name can contain a space — "Profile 4" — so it is read back as an argument
+# rather than picked out of the string by word splitting.
 profile_of() {
-  local rest
-  case "$1" in
-    *--profile-directory=*) rest="${1#*--profile-directory=}" ;;
-    *) printf 'Default'; return ;;
-  esac
-  rest="${rest%% --*}"
-  rest="${rest//\\ / }"
-  printf '%s' "${rest:-Default}"
+  local arg
+  while IFS= read -r -d '' arg; do
+    case "$arg" in --profile-directory=*) printf '%s' "${arg#*=}"; return ;; esac
+  done < <(argv_of "$1")
+  printf 'Default'
 }
 
 as_browser() {
-  local cmd="$1" title="$2" binary="${1%% *}" out=() arg
+  local cmd="$1" title="$2" binary out=() arg
+  binary=$(binary_of "$1") || { printf '%s' "$cmd"; return; }
   case "${binary##*/}" in
     chromium | chromium-browser | google-chrome* | chrome | brave* | microsoft-edge* | vivaldi* | firefox*) ;;
     *) printf '%s' "$cmd"; return ;;
   esac
 
-  for arg in $cmd; do
+  while IFS= read -r -d '' arg; do
     case "$arg" in
       http://* | https://* | file://* | about:*) continue ;;
       --new-window) continue ;;
     esac
     out+=("$arg")
-  done
+  done < <(argv_of "$1")
 
   # Every tab, in order, on one command line: a browser handed several URLs
   # opens them as tabs in the window it was told to make.
   local tabs=() url
   while IFS= read -r url; do
-    [[ -n $url ]] && tabs+=("$(printf '%q' "$url")")
+    [[ -n $url ]] && tabs+=("$url")
   done < <(browser_tabs_for "$title" "$(browser_config_dir "$binary")/$(profile_of "$cmd")")
 
-  if ((${#tabs[@]} > 0)); then
-    printf '%s --new-window %s' "${out[*]}" "${tabs[*]}"
-  else
-    printf '%s --new-window' "${out[*]}"
-  fi
+  quote "${out[@]}" "--new-window" "${tabs[@]}"
 }
 
 # The page a browser window was on is not on any command line — but Chromium
@@ -155,11 +177,12 @@ browser_tabs_for() {
 
 # Claude Code keeps its conversations per directory, so --continue reopens the
 # one that window was in rather than a blank session.
+# Takes the argv of what was running inside the terminal and returns it quoted.
 as_command() {
-  case "${1%% *}" in
-    */claude | claude) printf 'claude --continue' ;;
-    *) printf '%s' "$1" ;;
+  case "${1##*/}" in
+    claude) printf 'claude --continue'; return ;;
   esac
+  quote "$@"
 }
 
 # Only a terminal has a session inside it. Every other app has children too —
@@ -211,25 +234,51 @@ session_for() {
     esac
     [[ $matched == true ]] || continue
 
-    cmdline=""
+    # Read as arguments, never as a line of text: this is the second way an
+    # attacker-chosen string could reach a shell, and it is a program's own
+    # argv, which is under no obligation to be free of shell syntax.
+    local run="" inner=()
     case "$comm" in
       bash | zsh | fish | sh | nu | dash | ksh)
         for child in $(pgrep -P "$pid" 2>/dev/null); do
-          cmdline=$(tr '\0' ' ' <"/proc/$child/cmdline" 2>/dev/null | sed 's/[[:space:]]*$//')
-          [[ -n $cmdline ]] && break
+          inner=()
+          while IFS= read -r -d '' cmdline; do inner+=("$cmdline"); done <"/proc/$child/cmdline"
+          ((${#inner[@]})) && break
         done
         ;;
-      *) cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | sed 's/[[:space:]]*$//') ;;
+      *)
+        while IFS= read -r -d '' cmdline; do inner+=("$cmdline"); done <"/proc/$pid/cmdline"
+        ;;
     esac
+    ((${#inner[@]})) && run=$(as_command "${inner[@]}")
 
-    printf '%s\t%s' "$dir" "${cmdline:+$(as_command "$cmdline")}"
+    printf '%s\t%s' "$dir" "$run"
     return 0
   done
   return 1
 }
 
+# Some launchers hand the kernel one argument with the whole command line inside
+# it — /proc says argv[0] is "/opt/thing/App --show" and there is no argv[1].
+# Quoting that faithfully produces a path no file has. It is only split when the
+# whole thing is not a program and its first word is, so splitting can never
+# turn a real filename with a space in it into two arguments. The split is on
+# whitespace alone; the pieces are quoted again immediately.
+split_packed_argv() {
+  local args=() arg
+  while IFS= read -r -d '' arg; do args+=("$arg"); done < <(argv_of "$1")
+  ((${#args[@]} == 1)) || { printf '%s' "$1"; return; }
+  [[ ${args[0]} == *[[:space:]]* && ! -x ${args[0]} ]] || { printf '%s' "$1"; return; }
+
+  local head="${args[0]%%[[:space:]]*}"
+  [[ -x $head ]] || { printf '%s' "$1"; return; }
+  read -ra args <<<"${args[0]}"
+  quote "${args[@]}"
+}
+
 cmd=$(strip_daemon_flags <"/proc/$pid/cmdline")
 [[ -n $cmd ]] || exit 1
+cmd=$(split_packed_argv "$cmd")
 cmd=$(strip_exec_flag "$cmd")
 cmd=$(strip_working_dir "$cmd")
 title=$(jq -r '.title' <<<"$client")
@@ -241,7 +290,7 @@ raw_cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)
 if is_terminal "$pid" "$raw_cmdline" && session=$(session_for "$pid" "$title"); then
   dir="${session%%$'\t'*}"
   run="${session#*$'\t'}"
-  if flag=$(working_directory_flag "${cmd%% *}" "$dir"); then
+  if flag=$(working_directory_flag "$(binary_of "$cmd")" "$dir"); then
     cmd="$cmd $flag"
   fi
   [[ -n $run ]] && cmd="$cmd -e $run"
